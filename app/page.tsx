@@ -17,7 +17,7 @@ export default function Home() {
         <Link href="/login" className="btn">Sign in</Link>
         <Link href="/signup" className="btn-secondary">Create candidate account</Link>
         <a
-          href="https://github.com/tusharsatpute/take-a-test"
+          href="https://github.com/ExPl0iT-29/take-a-test"
           target="_blank"
           rel="noreferrer"
           className="btn-secondary"
@@ -53,7 +53,7 @@ export default function Home() {
 
       <footer className="mt-16 text-xs text-slate-400 text-center">
         Built with <a href="https://claude.com/claude-code" className="underline">Claude Code</a>.
-        Source: <a href="https://github.com/tusharsatpute/take-a-test" className="underline">github.com/tusharsatpute/take-a-test</a>
+        Source: <a href="https://github.com/ExPl0iT-29/take-a-test" className="underline">github.com/ExPl0iT-29/take-a-test</a>
       </footer>
     </main>
   );

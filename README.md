@@ -63,7 +63,7 @@ Commercial proctoring tools (ProctorU, Honorlock, Examity, Mettl) cost **$5–50
 
 ### 1. Clone + install
 ```bash
-git clone https://github.com/<your-username>/take-a-test.git
+git clone https://github.com/ExPl0iT-29/take-a-test.git
 cd take-a-test
 npm install
 ```
