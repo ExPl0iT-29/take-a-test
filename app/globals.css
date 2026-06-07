@@ -1,0 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body { height: 100%; }
+body { @apply bg-slate-50 text-slate-900; }
+.btn { @apply inline-flex items-center px-4 py-2 rounded-md bg-slate-900 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50; }
+.btn-secondary { @apply inline-flex items-center px-4 py-2 rounded-md border border-slate-300 bg-white text-sm font-medium hover:bg-slate-100; }
+.input { @apply w-full px-3 py-2 border border-slate-300 rounded-md text-sm; }
+.card { @apply bg-white border border-slate-200 rounded-lg p-4 shadow-sm; }
