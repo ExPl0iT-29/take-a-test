@@ -10,12 +10,13 @@ import { NextRequest, NextResponse } from "next/server";
  * SEB_BROWSER_EXAM_KEY env var. SEB sends the BEK hash on every request so
  * the server can verify the candidate is actually inside SEB.
  */
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const origin = req.headers.get("x-forwarded-proto") && req.headers.get("host")
     ? `${req.headers.get("x-forwarded-proto")}://${req.headers.get("host")}`
     : new URL(req.url).origin;
 
-  const startUrl = `${origin}/test/${params.id}`;
+  const startUrl = `${origin}/test/${id}`;
   const host = new URL(origin).host;
 
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
@@ -91,7 +92,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   return new NextResponse(plist, {
     headers: {
       "Content-Type": "application/seb",
-      "Content-Disposition": `attachment; filename="exam-${params.id}.seb"`,
+      "Content-Disposition": `attachment; filename="exam-${id}.seb"`,
     },
   });
 }

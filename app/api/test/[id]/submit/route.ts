@@ -6,15 +6,16 @@ import { createClient } from "@/lib/supabase/server";
  * SQL function. The client never sees correct answers — they live in the
  * admin-only `answer_keys` table that only the function can read.
  */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const supabase = createClient();
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   const { terminated } = await req.json().catch(() => ({ terminated: false }));
 
   const { data: attempt } = await supabase
-    .from("attempts").select("id, status").eq("test_id", params.id).eq("candidate_id", user.id).maybeSingle();
+    .from("attempts").select("id, status").eq("test_id", id).eq("candidate_id", user.id).maybeSingle();
   if (!attempt) return NextResponse.json({ error: "No attempt" }, { status: 404 });
   if (attempt.status !== "in_progress") return NextResponse.json({ error: "Already submitted" }, { status: 400 });
 

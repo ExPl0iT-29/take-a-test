@@ -1,6 +1,12 @@
 {
-  "name": "proctored-test-platform",
-  "version": "0.1.0",
+  "name": "take-a-test",
+  "version": "1.0.0",
+  "description": "Open-source proctored online exam platform with SEB integration, webcam snapshots, invite-only allowlist, and server-side grading.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ExPl0iT-29/take-a-test"
+  },
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -11,7 +17,7 @@
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.45.4",
-    "next": "14.2.15",
+    "next": "^15.5.19",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

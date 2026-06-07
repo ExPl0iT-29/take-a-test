@@ -2,8 +2,9 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Grader from "@/components/Grader";
 
-export default async function AttemptDetail({ params }: { params: { id: string } }) {
-  const supabase = createClient();
+export default async function AttemptDetail({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
   const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
@@ -12,11 +13,11 @@ export default async function AttemptDetail({ params }: { params: { id: string }
   const { data: a } = await supabase
     .from("attempts")
     .select("*, candidate:profiles(email, full_name), test:tests(title)")
-    .eq("id", params.id).single();
+    .eq("id", id).single();
   const { data: answers } = await supabase
-    .from("answers").select("*, question:questions(*)").eq("attempt_id", params.id);
+    .from("answers").select("*, question:questions(*)").eq("attempt_id", id);
   const { data: events } = await supabase
-    .from("proctor_events").select("*").eq("attempt_id", params.id).order("created_at");
+    .from("proctor_events").select("*").eq("attempt_id", id).order("created_at");
 
   // Snapshot URLs (signed, 1h)
   const snapshotPaths: string[] = (events || [])

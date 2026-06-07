@@ -11,11 +11,12 @@ import { adminClient } from "@/lib/supabase/admin";
  * The template gets access to {{ .Data.test_title }}, {{ .Data.invite_code }},
  * {{ .Data.test_url }}.
  */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return NextResponse.json({ error: "SUPABASE_SERVICE_ROLE_KEY is not configured on the server" }, { status: 500 });
   }
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
@@ -24,10 +25,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { only } = (await req.json().catch(() => ({}))) as { only?: string[] };
 
   const admin = adminClient();
-  const { data: test } = await admin.from("tests").select("title").eq("id", params.id).single();
+  const { data: test } = await admin.from("tests").select("title").eq("id", id).single();
   if (!test) return NextResponse.json({ error: "Test not found" }, { status: 404 });
 
-  let q = admin.from("invites").select("*").eq("test_id", params.id);
+  let q = admin.from("invites").select("*").eq("test_id", id);
   if (only && only.length) q = q.in("email", only.map((e) => e.toLowerCase()));
   const { data: invites } = await q;
   if (!invites?.length) return NextResponse.json({ sent: 0 });
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const origin = req.headers.get("x-forwarded-proto") && req.headers.get("host")
     ? `${req.headers.get("x-forwarded-proto")}://${req.headers.get("host")}`
     : new URL(req.url).origin;
-  const testUrl = `${origin}/test/${params.id}`;
+  const testUrl = `${origin}/test/${id}`;
 
   const results: { email: string; ok: boolean; error?: string }[] = [];
   for (const inv of invites) {

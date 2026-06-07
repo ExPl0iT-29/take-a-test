@@ -69,15 +69,9 @@ npm install
 ```
 
 ### 2. Spin up Supabase
-Create a project at https://supabase.com, then in the SQL editor run:
-```bash
-cat supabase/schema.sql | pbcopy   # or open the file and paste
-```
+Create a project at https://supabase.com, then in the SQL editor paste the entire contents of [`supabase/schema.sql`](./supabase/schema.sql) and run.
 
-In Storage:
-- Create a **private** bucket named `snapshots`
-- Create a **public** bucket named `question-images`
-- Storage policies for both are at the bottom of `supabase/schema.sql` — run them too.
+That single file creates all tables, RLS policies, the signup trigger, the server-side grading function, and both storage buckets with their policies. Nothing else to click in the dashboard.
 
 ### 3. Configure env
 ```bash
@@ -191,8 +185,3 @@ PRs welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 MIT — see [LICENSE](./LICENSE).
 
----
-
-## Credits
-
-Built end-to-end with a lot of help from [Claude Code](https://claude.com/claude-code). The schema, RLS policies, proctoring component, SEB hash verification, and admin tooling were paired-programmed with Claude in a single session.

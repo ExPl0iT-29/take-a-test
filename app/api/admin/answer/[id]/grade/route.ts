@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const supabase = createClient();
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { data: ans, error } = await supabase
     .from("answers")
     .update({ score: s, feedback: feedback ?? null })
-    .eq("id", params.id)
+    .eq("id", id)
     .select("attempt_id")
     .single();
   if (error || !ans) return NextResponse.json({ error: error?.message || "Update failed" }, { status: 400 });
