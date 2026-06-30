@@ -250,13 +250,19 @@ grant execute on function public.submit_attempt(uuid, boolean) to authenticated;
 ------------------------------------------------------------
 -- Storage buckets + policies
 ------------------------------------------------------------
-insert into storage.buckets (id, name, public)
-  values ('snapshots', 'snapshots', false)
-  on conflict (id) do nothing;
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+  values ('snapshots', 'snapshots', false, 204800,
+          array['image/jpeg','image/png','image/webp'])
+  on conflict (id) do update set
+    file_size_limit = excluded.file_size_limit,
+    allowed_mime_types = excluded.allowed_mime_types;
 
-insert into storage.buckets (id, name, public)
-  values ('question-images', 'question-images', true)
-  on conflict (id) do nothing;
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+  values ('question-images', 'question-images', true, 5242880,
+          array['image/jpeg','image/png','image/webp','image/gif'])
+  on conflict (id) do update set
+    file_size_limit = excluded.file_size_limit,
+    allowed_mime_types = excluded.allowed_mime_types;
 
 -- snapshots: candidate writes ONLY to their own attempt folder; only admins read.
 create policy "snapshots candidate upload" on storage.objects for insert to authenticated

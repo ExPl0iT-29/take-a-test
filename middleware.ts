@@ -1,6 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+// Middleware exists only to refresh the Supabase auth cookie on each request.
+// Page-level redirects are handled in the page components themselves so that
+// a transient Supabase outage doesn't bounce signed-in users to /login.
 export async function middleware(req: NextRequest) {
   let res = NextResponse.next({ request: req });
   const supabase = createServerClient(
@@ -17,16 +20,12 @@ export async function middleware(req: NextRequest) {
       },
     }
   );
-  const { data: { user } } = await supabase.auth.getUser();
-  const path = req.nextUrl.pathname;
-  const isProtected = path.startsWith("/admin") || path.startsWith("/dashboard") || path.startsWith("/test");
-  if (isProtected && !user) {
-    const url = req.nextUrl.clone();
-    url.pathname = "/login";
-    url.searchParams.set("next", path);
-    return NextResponse.redirect(url);
-  }
+  // ponytail: best-effort token refresh. Errors are non-fatal — the page will
+  // call getUser() itself and redirect to /login if there's genuinely no session.
+  try { await supabase.auth.getUser(); } catch { /* network blip, ignore */ }
   return res;
 }
 
-export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"] };
+export const config = {
+  matcher: ["/admin/:path*", "/dashboard/:path*", "/test/:path*"],
+};

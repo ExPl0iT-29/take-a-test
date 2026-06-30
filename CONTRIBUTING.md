@@ -11,7 +11,7 @@ Thanks for your interest! This is an early-stage project — small PRs and bug r
 ## What's most useful
 
 - **Bug fixes** — especially around proctoring edge cases (different browsers, OSes, webcam permission flows).
-- **Multi-tenancy** — see the Roadmap in README. Big change, would unlock a lot.
+- **Multi-tenancy** — see the Roadmap in README. Needed before this can host more than one org.
 - **Accessibility** — current UI has not been audited.
 - **Internationalization** — strings are hard-coded in English.
 - **Docs** — better setup guides, video walkthrough, sample tests.
