@@ -62,7 +62,7 @@ export default function Home() {
       <header className="sticky top-0 z-30 backdrop-blur supports-[backdrop-filter]:bg-slate-950/60 border-b border-white/5">
         <nav className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-            <span className="inline-block h-6 w-6 rounded-md bg-gradient-to-br from-indigo-400 to-fuchsia-500" />
+            <img src="/logo.jpg" alt="Logo" className="h-6 w-6 rounded-md object-cover" />
             <span>Take A Test</span>
             <span className="ml-1.5 text-[10px] uppercase tracking-wider text-slate-400 border border-white/10 px-1.5 py-0.5 rounded">v1.0</span>
           </Link>
