@@ -179,13 +179,25 @@ revoke insert on attempts from authenticated;
 grant insert (test_id, candidate_id) on attempts to authenticated;
 
 -- answers
--- WITH CHECK previously omitted the admin branch that USING has, so an
--- admin saving a manual grade on someone else's long-answer would fail
--- RLS (new row's attempt.candidate_id is the candidate, never auth.uid()
--- for an admin caller). Mirror the USING clause exactly.
+-- WITH CHECK mirrors USING's admin branch (an admin saving a manual grade
+-- on someone else's long-answer would otherwise fail RLS), and additionally
+-- enforces the exam timer server-side: ExamRoom.tsx's countdown is a UI
+-- convenience only — without this, nothing stopped a candidate who paused
+-- or bypassed the client timer from still upserting answers after time's up.
+-- 2-minute grace absorbs network latency around the client's own cutoff.
 create policy "own answers" on answers for all
   using (exists(select 1 from attempts a where a.id = attempt_id and (a.candidate_id = auth.uid() or exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))))
-  with check (exists(select 1 from attempts a where a.id = attempt_id and (a.candidate_id = auth.uid() or exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))));
+  with check (
+    exists(
+      select 1 from attempts a join tests t on t.id = a.test_id
+      where a.id = attempt_id
+        and (
+          (a.candidate_id = auth.uid() and a.status = 'in_progress'
+           and now() <= a.started_at + (t.duration_minutes || ' minutes')::interval + interval '2 minutes')
+          or exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+        )
+    )
+  );
 
 -- invites
 create policy "admin manage invites" on invites for all
@@ -193,6 +205,14 @@ create policy "admin manage invites" on invites for all
   with check (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
 create policy "candidate read own invite" on invites for select to authenticated
   using (lower(email) = lower((select email from auth.users where id = auth.uid())));
+
+-- The row policy above (and admin's own FOR ALL select) would otherwise let
+-- a candidate read their own `code` straight from the browser, making the
+-- unlock step pointless — they're meant to receive it out-of-band from the
+-- admin, not read it back from the table. Admin's invite list page reads
+-- the real code via /api/admin/tests/[id]/invites (service-role) instead.
+revoke select on invites from authenticated;
+grant select (id, test_id, email, used_at, created_at) on invites to authenticated;
 
 -- proctor events
 create policy "own events insert" on proctor_events for insert

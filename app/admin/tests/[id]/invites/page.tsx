@@ -20,8 +20,11 @@ export default function InvitesPage() {
   const [origin, setOrigin] = useState("");
 
   const load = async () => {
-    const { data } = await supabase.from("invites").select("*").eq("test_id", id).order("created_at", { ascending: false });
-    setInvites((data as any) || []);
+    // invites.code is no longer selectable via the browser client (see
+    // schema.sql) — read it through the admin-gated API route instead.
+    const r = await fetch(`/api/admin/tests/${id}/invites`);
+    const j = await r.json().catch(() => ({}));
+    setInvites(r.ok ? (j.invites || []) : []);
   };
 
   useEffect(() => {
