@@ -4,7 +4,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { adminClient } from "@/lib/supabase/admin";
 import ExamRoom from "@/components/ExamRoom";
-import { SEB_ENFORCEMENT_ENABLED, verifySebRequest } from "@/lib/seb";
+import { SEB_ENFORCEMENT_ENABLED, verifySebRequest, verifySebRequestWithKey } from "@/lib/seb";
 import UnlockForm from "@/components/UnlockForm";
 
 export default async function TakeTest({ params }: { params: Promise<{ id: string }> }) {
@@ -46,9 +46,18 @@ export default async function TakeTest({ params }: { params: Promise<{ id: strin
     const proto = h.get("x-forwarded-proto") || "https";
     const fullUrl = `${proto}://${host}/test/${id}`;
     const hash = h.get("x-safeexambrowser-requesthash");
-    const ok = SEB_ENFORCEMENT_ENABLED
-      ? await verifySebRequest(fullUrl, hash)
-      : !!hash; // per-test mode: presence-only check (BEK not configured)
+
+    let ok: boolean;
+    if (test.require_seb) {
+      // Per-test key, never a presence-only fallback: a mandatory-SEB
+      // test with no key configured is denied to everyone (fail closed),
+      // not quietly left open to anyone sending a fake header value.
+      const { data: sebSecret } = await adminClient()
+        .from("test_secrets").select("seb_browser_exam_key").eq("test_id", id).maybeSingle();
+      ok = !!sebSecret?.seb_browser_exam_key && await verifySebRequestWithKey(fullUrl, hash, sebSecret.seb_browser_exam_key);
+    } else {
+      ok = await verifySebRequest(fullUrl, hash);
+    }
     if (!ok) {
       return (
         <main className="max-w-xl mx-auto p-10 text-center">

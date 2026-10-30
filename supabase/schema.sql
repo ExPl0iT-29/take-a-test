@@ -38,7 +38,14 @@ create table tests (
 -- server compares codes with the service-role client.
 create table test_secrets (
   test_id uuid primary key references tests(id) on delete cascade,
-  access_code text
+  access_code text,
+  -- Per-test Browser Exam Key: SEB_ENFORCE/SEB_BROWSER_EXAM_KEY is a
+  -- site-wide fallback, but a specific test's "SEB mandatory" flag must
+  -- never degrade to a presence-only header check (see lib/seb.ts) — it
+  -- either has its own key and gets verified cryptographically, or it has
+  -- none and is denied to everyone.
+  seb_browser_exam_key text,
+  seb_exit_password text
 );
 
 -- Questions never store the correct answer; that lives in answer_keys.
@@ -190,6 +197,27 @@ create policy "questions readable with test" on questions for select to authenti
 create policy "admin manage questions" on questions for all
   using (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))
   with check (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
+
+-- Editing a question's type/options/prompt after a candidate has already
+-- answered it would silently corrupt their stored response (e.g. an MCQ
+-- option id they picked no longer exists). points is left editable —
+-- rubric adjustments after the fact are a legitimate admin decision.
+create or replace function public.prevent_question_edit_if_answered()
+returns trigger language plpgsql as $$
+begin
+  if (new.type is distinct from old.type
+      or new.options is distinct from old.options
+      or new.prompt is distinct from old.prompt)
+     and exists(select 1 from answers a where a.question_id = old.id)
+  then
+    raise exception 'Cannot edit a question once a candidate has answered it (question %)', old.id;
+  end if;
+  return new;
+end; $$;
+
+drop trigger if exists lock_answered_question on questions;
+create trigger lock_answered_question before update on questions
+  for each row execute function public.prevent_question_edit_if_answered();
 
 -- answer_keys: admin only (no candidate policy = no candidate access)
 create policy "admin manage answer_keys" on answer_keys for all

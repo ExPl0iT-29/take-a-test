@@ -22,8 +22,14 @@ export default function EditTest() {
   useEffect(() => {
     (async () => {
       const { data: t } = await supabase.from("tests").select("*").eq("id", id).single();
-      const { data: secret } = await supabase.from("test_secrets").select("access_code").eq("test_id", id).maybeSingle();
-      setTest({ ...t, access_code: secret?.access_code ?? null });
+      const { data: secret } = await supabase.from("test_secrets")
+        .select("access_code, seb_browser_exam_key, seb_exit_password").eq("test_id", id).maybeSingle();
+      setTest({
+        ...t,
+        access_code: secret?.access_code ?? null,
+        seb_browser_exam_key: secret?.seb_browser_exam_key ?? null,
+        seb_exit_password: secret?.seb_exit_password ?? null,
+      });
       const { data: qs } = await supabase.from("questions").select("*").eq("test_id", id).order("position");
       const ids = (qs || []).map((q: any) => q.id);
       const { data: keys } = ids.length
@@ -36,16 +42,19 @@ export default function EditTest() {
     })();
   }, [id, supabase]);
 
+  const SECRET_FIELDS = ["access_code", "seb_browser_exam_key", "seb_exit_password"];
   const updateTest = async (patch: any) => {
     setTest({ ...test, ...patch });
-    if ("access_code" in patch) {
-      // access_code lives in test_secrets, never in the tests row itself.
-      await supabase.from("test_secrets").upsert({ test_id: id, access_code: patch.access_code });
-      const { access_code, ...rest } = patch;
-      if (Object.keys(rest).length) await supabase.from("tests").update(rest).eq("id", id);
-      return;
+    const secretPatch: any = {};
+    const rest: any = {};
+    for (const [k, v] of Object.entries(patch)) {
+      if (SECRET_FIELDS.includes(k)) secretPatch[k] = v; else rest[k] = v;
     }
-    await supabase.from("tests").update(patch).eq("id", id);
+    if (Object.keys(secretPatch).length) {
+      // These live in test_secrets, never in the tests row itself.
+      await supabase.from("test_secrets").upsert({ test_id: id, ...secretPatch });
+    }
+    if (Object.keys(rest).length) await supabase.from("tests").update(rest).eq("id", id);
   };
 
   const generateCode = () => {
@@ -130,6 +139,30 @@ export default function EditTest() {
           <input type="checkbox" checked={test.require_seb || false} onChange={(e) => updateTest({ require_seb: e.target.checked })} />
           Require Safe Exam Browser — block normal browsers from opening this test
         </label>
+
+        {test.require_seb && (
+          <div className="border-t pt-3 space-y-3">
+            <div>
+              <div className="text-sm font-medium">SEB Browser Exam Key</div>
+              <p className="text-xs text-slate-500 mt-1">
+                Required — without one this test is denied to everyone, even in SEB. Download the .seb below,
+                open it in the SEB Configuration Tool, copy the Browser Exam Key from the Exam tab, and paste it here.
+              </p>
+              <input className="input font-mono mt-2" placeholder="(not set — test is locked to everyone)"
+                value={test.seb_browser_exam_key || ""}
+                onChange={(e) => updateTest({ seb_browser_exam_key: e.target.value.trim() || null })} />
+            </div>
+            <div>
+              <div className="text-sm font-medium">Exit password</div>
+              <p className="text-xs text-slate-500 mt-1">
+                Optional. Without one, candidates cannot quit SEB at all during this exam.
+              </p>
+              <input className="input font-mono mt-2" placeholder="(none — quit disabled)" type="text"
+                value={test.seb_exit_password || ""}
+                onChange={(e) => updateTest({ seb_exit_password: e.target.value || null })} />
+            </div>
+          </div>
+        )}
 
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={test.invite_only || false} onChange={(e) => updateTest({ invite_only: e.target.checked })} />

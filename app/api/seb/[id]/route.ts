@@ -1,15 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { adminClient } from "@/lib/supabase/admin";
+import { sebHashedPassword } from "@/lib/seb";
+
+/**
+ * Common remote-access / screen-share / communication apps blocked during
+ * an exam. Deliberately excludes browser engines (chrome/firefox/edge) —
+ * SEB itself embeds Chromium on some platforms, and killing that process
+ * name risks taking SEB down with it.
+ */
+const PROHIBITED_PROCESSES = [
+  "TeamViewer", "AnyDesk", "msra", "Zoom", "Discord", "Skype",
+  "obs", "Slack", "Teams", "AeroAdmin", "Supremo", "Chrome Remote Desktop",
+];
 
 /**
  * Generates an UNENCRYPTED .seb config file (gzipped plist would be standard,
  * but SEB also accepts plain XML plist with extension .seb). Candidates
  * double-click this and SEB launches locked to the exam URL.
  *
+ * sebConfigPurpose=0 ("starting an exam") is what actually makes this a
+ * locked exam config — purpose=1 ("configuring a client") is an editable
+ * settings file that exits freely regardless of the restrictions below it.
+ *
  * IMPORTANT: After downloading, open the .seb file in the SEB Configuration
- * Tool once and set a Browser Exam Key (Exam tab) + paste it into your
- * SEB_BROWSER_EXAM_KEY env var. SEB sends the BEK hash on every request so
- * the server can verify the candidate is actually inside SEB.
+ * Tool once and set a Browser Exam Key (Exam tab), then paste that same
+ * key into this test's "SEB key" field in the admin test editor — it's
+ * stored per-test in test_secrets and verified cryptographically on every
+ * request to /test/[id] (see lib/seb.ts), never as a presence-only check.
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -27,20 +45,38 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const startUrl = `${origin}/test/${id}`;
   const host = new URL(origin).host;
 
+  const { data: secret } = await adminClient()
+    .from("test_secrets").select("seb_exit_password").eq("test_id", id).maybeSingle();
+  const exitPassword = secret?.seb_exit_password || "";
+  const hashedQuitPassword = exitPassword ? await sebHashedPassword(exitPassword) : "";
+
+  const processesXml = PROHIBITED_PROCESSES.map((name) => `    <dict>
+      <key>active</key><true/>
+      <key>currentUser</key><true/>
+      <key>strongKill</key><true/>
+      <key>executable</key><string>${name}</string>
+      <key>description</key><string>${name}</string>
+    </dict>`).join("\n");
+
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>startURL</key><string>${startUrl}</string>
-  <key>sebConfigPurpose</key><integer>1</integer>
+  <key>sebConfigPurpose</key><integer>0</integer>
   <key>browserViewMode</key><integer>1</integer>
   <key>mainBrowserWindowWidth</key><string>100%</string>
   <key>mainBrowserWindowHeight</key><string>100%</string>
   <key>enableTouchExit</key><false/>
-  <key>allowQuit</key><true/>
+  <key>allowQuit</key><${exitPassword ? "true" : "false"}/>
   <key>quitURL</key><string>${origin}/dashboard</string>
-  <key>hashedQuitPassword</key><string></string>
+  <key>hashedQuitPassword</key><string>${hashedQuitPassword}</string>
   <key>ignoreExitKeys</key><false/>
+  <key>enablePrivateClipboard</key><true/>
+  <key>prohibitedProcesses</key>
+  <array>
+${processesXml}
+  </array>
   <key>enableF1</key><false/>
   <key>enableF3</key><false/>
   <key>enableF5</key><false/>

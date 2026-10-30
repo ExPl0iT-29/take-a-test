@@ -25,3 +25,20 @@ export async function verifySebRequest(fullUrl: string, headerHash: string | nul
   const expected = await sha256Hex(fullUrl + BEK);
   return expected.toLowerCase() === headerHash.toLowerCase();
 }
+
+/**
+ * Per-test BEK check (test_secrets.seb_browser_exam_key), independent of
+ * the site-wide SEB_ENFORCE flag above. A test with require_seb=true but
+ * no key of its own must be denied to everyone, never fall back to a
+ * presence-only check on the header.
+ */
+export async function verifySebRequestWithKey(fullUrl: string, headerHash: string | null, key: string): Promise<boolean> {
+  if (!headerHash) return false;
+  const expected = await sha256Hex(fullUrl + key);
+  return expected.toLowerCase() === headerHash.toLowerCase();
+}
+
+/** SEB's hashedQuitPassword is the uppercase SHA256 hex digest of the plaintext exit password. */
+export async function sebHashedPassword(plaintext: string): Promise<string> {
+  return (await sha256Hex(plaintext)).toUpperCase();
+}
