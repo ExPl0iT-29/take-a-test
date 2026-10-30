@@ -135,7 +135,12 @@ grant insert (id, email, full_name) on profiles to authenticated;
 create policy "admin manage tests" on tests for all
   using (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))
   with check (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
-create policy "published tests readable" on tests for select
+-- `to authenticated`: without it this policy (and the questions one below,
+-- transitively) has no role restriction, so it also applies to `anon` —
+-- a fully unauthenticated caller using only the public anon key could
+-- select every published test's title (and, via questions, its full
+-- content) with no account at all. Confirmed live before this fix.
+create policy "published tests readable" on tests for select to authenticated
   using (is_published = true or owner_id = auth.uid());
 
 -- test_secrets: admin only (no candidate policy = no candidate access,
@@ -145,8 +150,43 @@ create policy "admin manage test_secrets" on test_secrets for all
   with check (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
 
 -- questions
-create policy "questions readable with test" on questions for select
-  using (exists(select 1 from tests t where t.id = test_id and (t.is_published or t.owner_id = auth.uid())));
+-- Previously readable by anyone (including anon) once the test was
+-- published, regardless of whether they'd ever started it. Now requires
+-- sign-in AND an actual unlocked attempt — questions are served only once
+-- a candidate has passed the code/invite gate, not just because the test
+-- exists and is published.
+-- Helper for the policy below: test_secrets and invites are themselves
+-- RLS-restricted (admin-only / own-row-only), so a plain subquery against
+-- them from inside another table's policy sees nothing for a non-admin
+-- caller regardless of what's actually there — SECURITY DEFINER is
+-- required to evaluate "does this test actually need a code" truthfully.
+create or replace function public.test_requires_code(p_test_id uuid, p_email text)
+returns boolean
+language sql security definer set search_path = public
+as $$
+  select exists(select 1 from test_secrets where test_id = p_test_id and access_code is not null)
+      or exists(select 1 from invites where test_id = p_test_id and used_at is null and lower(email) = lower(p_email));
+$$;
+revoke execute on function public.test_requires_code(uuid, text) from public, anon;
+grant execute on function public.test_requires_code(uuid, text) to authenticated;
+
+create policy "questions readable with test" on questions for select to authenticated
+  using (
+    exists(select 1 from tests t where t.id = test_id and t.owner_id = auth.uid())
+    or exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+    or exists(
+      select 1 from attempts a
+      where a.test_id = questions.test_id and a.candidate_id = auth.uid()
+        and (
+          -- Unlocked via the real unlock flow, OR this test never needed
+          -- one in the first place (no global code, no pending invite) —
+          -- mirrors app/test/[id]/page.tsx's own codeRequired logic so a
+          -- fully open test isn't accidentally locked out forever.
+          a.unlocked = true
+          or not public.test_requires_code(a.test_id, auth.jwt() ->> 'email')
+        )
+    )
+  );
 create policy "admin manage questions" on questions for all
   using (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))
   with check (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
@@ -179,6 +219,14 @@ revoke insert on attempts from authenticated;
 grant insert (test_id, candidate_id) on attempts to authenticated;
 
 -- answers
+-- score/feedback are set exclusively by the grading route (service-role
+-- client) — nothing stopped a candidate from upserting their own score or
+-- feedback directly otherwise (RLS only ever checked attempt ownership
+-- and time, not which columns were touched).
+revoke insert, update on answers from authenticated;
+grant insert (attempt_id, question_id, response, updated_at) on answers to authenticated;
+grant update (response, updated_at) on answers to authenticated;
+
 -- WITH CHECK mirrors USING's admin branch (an admin saving a manual grade
 -- on someone else's long-answer would otherwise fail RLS), and additionally
 -- enforces the exam timer server-side: ExamRoom.tsx's countdown is a UI
