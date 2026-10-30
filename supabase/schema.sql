@@ -29,8 +29,16 @@ create table tests (
   is_published boolean default false,
   require_seb boolean not null default false,
   invite_only boolean not null default false,
-  access_code text,
   created_at timestamptz default now()
+);
+
+-- Admin-only, same as answer_keys: kept out of the `tests` row so the
+-- "published tests readable" policy (which any signed-in candidate hits)
+-- can never expose it. Candidates never select this table directly — the
+-- server compares codes with the service-role client.
+create table test_secrets (
+  test_id uuid primary key references tests(id) on delete cascade,
+  access_code text
 );
 
 -- Questions never store the correct answer; that lives in answer_keys.
@@ -98,6 +106,7 @@ create table proctor_events (
 ------------------------------------------------------------
 alter table profiles enable row level security;
 alter table tests enable row level security;
+alter table test_secrets enable row level security;
 alter table questions enable row level security;
 alter table answer_keys enable row level security;
 alter table attempts enable row level security;
@@ -110,12 +119,30 @@ create policy "self read profile" on profiles for select using (auth.uid() = id)
 create policy "self update profile" on profiles for update using (auth.uid() = id);
 create policy "insert own profile" on profiles for insert with check (auth.uid() = id);
 
+-- RLS alone can't stop a candidate updating their own `role` column via
+-- this policy — add a column-level grant so self-update can only ever
+-- touch full_name. Admin promotion stays SQL-only (see bottom of file).
+revoke update on profiles from authenticated;
+grant update (full_name) on profiles to authenticated;
+
+-- Same issue on insert: the policy only checks id = auth.uid(), so a
+-- candidate could race the signup trigger with their own insert carrying
+-- role='admin'. role keeps its table default ('candidate') either way.
+revoke insert on profiles from authenticated;
+grant insert (id, email, full_name) on profiles to authenticated;
+
 -- tests
 create policy "admin manage tests" on tests for all
   using (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))
   with check (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
 create policy "published tests readable" on tests for select
   using (is_published = true or owner_id = auth.uid());
+
+-- test_secrets: admin only (no candidate policy = no candidate access,
+-- same pattern as answer_keys above).
+create policy "admin manage test_secrets" on test_secrets for all
+  using (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))
+  with check (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
 
 -- questions
 create policy "questions readable with test" on questions for select
@@ -130,9 +157,26 @@ create policy "admin manage answer_keys" on answer_keys for all
   with check (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
 
 -- attempts
-create policy "own attempts" on attempts for all
-  using (candidate_id = auth.uid() or exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))
-  with check (candidate_id = auth.uid() or exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
+-- Candidates may read their own attempt and create it, but never write to
+-- it directly — score, status and unlocked are set exclusively by the
+-- submit_attempt() SECURITY DEFINER function or the service-role key
+-- (see unlock/route.ts), never by a client-side table update. A blanket
+-- FOR ALL policy here previously let a candidate set their own score,
+-- status or unlocked flag straight from the browser.
+create policy "own attempts read" on attempts for select
+  using (candidate_id = auth.uid() or exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
+create policy "own attempts insert" on attempts for insert
+  with check (candidate_id = auth.uid());
+create policy "admin update attempts" on attempts for update
+  using (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))
+  with check (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
+
+-- The insert policy only checks candidate_id — without this grant a
+-- candidate could insert their own attempt row with score/status/unlocked
+-- already set to whatever they like. Limit self-insert to the two columns
+-- the app actually sets; everything else keeps its table default.
+revoke insert on attempts from authenticated;
+grant insert (test_id, candidate_id) on attempts to authenticated;
 
 -- answers
 create policy "own answers" on answers for all

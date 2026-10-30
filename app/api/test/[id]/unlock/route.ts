@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { adminClient } from "@/lib/supabase/admin";
 
 // Allow up to N failed unlock attempts per (user, test) inside WINDOW_MS.
 // Logged via proctor_events for audit.
@@ -16,8 +17,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const code = String(raw || "").trim().toUpperCase();
   if (!code) return NextResponse.json({ error: "Code required" }, { status: 400 });
 
-  const { data: test } = await supabase.from("tests").select("id, access_code, is_published, invite_only").eq("id", id).single();
+  // Admin client: access_code lives in test_secrets, which candidates have
+  // no RLS policy to read at all — only the server can compare it.
+  const db = adminClient();
+  const { data: test } = await db.from("tests").select("id, is_published, invite_only").eq("id", id).single();
   if (!test || !test.is_published) return NextResponse.json({ error: "Test not found" }, { status: 404 });
+  const { data: secret } = await db.from("test_secrets").select("access_code").eq("test_id", id).maybeSingle();
 
   // Ensure attempt exists so we can attach proctor events
   let { data: attempt } = await supabase
@@ -45,7 +50,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   // Invite-only tests reject the global code; only personal invite codes count.
-  const globalMatch = !test.invite_only && test.access_code && test.access_code.trim().toUpperCase() === code;
+  const globalMatch = !test.invite_only && secret?.access_code && secret.access_code.trim().toUpperCase() === code;
 
   let inviteId: string | null = null;
   if (!globalMatch) {
@@ -66,9 +71,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     inviteId = invite.id;
   }
 
-  await supabase.from("attempts").update({ unlocked: true }).eq("id", attempt.id);
+  // attempts.unlocked and invites.used_at are server-decided, not
+  // candidate-writable — go through the service-role client.
+  await db.from("attempts").update({ unlocked: true }).eq("id", attempt.id);
   if (inviteId) {
-    await supabase.from("invites").update({ used_at: new Date().toISOString(), used_by: user.id }).eq("id", inviteId);
+    await db.from("invites").update({ used_at: new Date().toISOString(), used_by: user.id }).eq("id", inviteId);
   }
   await supabase.from("proctor_events").insert({ attempt_id: attempt.id, kind: "unlock_success" });
   return NextResponse.json({ ok: true });

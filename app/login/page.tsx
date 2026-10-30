@@ -8,7 +8,10 @@ function LoginInner() {
   const supabase = createClient();
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get("next") || "/dashboard";
+  const rawNext = params.get("next") || "/dashboard";
+  // Only allow internal paths — reject absolute/protocol-relative URLs
+  // (e.g. "https://evil.com" or "//evil.com") to prevent open redirect.
+  const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/dashboard";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);

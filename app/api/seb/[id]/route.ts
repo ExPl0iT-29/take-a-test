@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
 
 /**
  * Generates an UNENCRYPTED .seb config file (gzipped plist would be standard,
@@ -12,6 +13,13 @@ import { NextRequest, NextResponse } from "next/server";
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+
+  // Require sign-in — this config reveals the exam URL and allowed hosts,
+  // so it shouldn't be scrapeable anonymously by test id alone.
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+
   const origin = req.headers.get("x-forwarded-proto") && req.headers.get("host")
     ? `${req.headers.get("x-forwarded-proto")}://${req.headers.get("host")}`
     : new URL(req.url).origin;

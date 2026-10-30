@@ -176,6 +176,10 @@ See `supabase/schema.sql` for the full data model.
 - [ ] Full webcam video capture instead of snapshots.
 - [ ] LMS integrations (Moodle, Canvas).
 
+## Changelog
+
+- **Security hardening (2026-10-30)** — ported a set of fixes identified independently by [Laurent Biagiotti](https://github.com/laurentbiagiotti-netizen) in his fork, [Cybersup Exam](https://github.com/laurentbiagiotti-netizen/take-a-test): candidate role self-escalation via `profiles.role`, candidate write access to `attempts` (score/status/unlocked), the global test access code being readable by any signed-in user, weak `Math.random()` access codes, a `.seb` config download with no auth check, and an unvalidated post-login redirect. Thanks for the review.
+
 ## Contributing
 
 PRs welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md).

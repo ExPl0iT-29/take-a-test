@@ -22,7 +22,8 @@ export default function EditTest() {
   useEffect(() => {
     (async () => {
       const { data: t } = await supabase.from("tests").select("*").eq("id", id).single();
-      setTest(t);
+      const { data: secret } = await supabase.from("test_secrets").select("access_code").eq("test_id", id).maybeSingle();
+      setTest({ ...t, access_code: secret?.access_code ?? null });
       const { data: qs } = await supabase.from("questions").select("*").eq("test_id", id).order("position");
       const ids = (qs || []).map((q: any) => q.id);
       const { data: keys } = ids.length
@@ -37,13 +38,22 @@ export default function EditTest() {
 
   const updateTest = async (patch: any) => {
     setTest({ ...test, ...patch });
+    if ("access_code" in patch) {
+      // access_code lives in test_secrets, never in the tests row itself.
+      await supabase.from("test_secrets").upsert({ test_id: id, access_code: patch.access_code });
+      const { access_code, ...rest } = patch;
+      if (Object.keys(rest).length) await supabase.from("tests").update(rest).eq("id", id);
+      return;
+    }
     await supabase.from("tests").update(patch).eq("id", id);
   };
 
   const generateCode = () => {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const bytes = new Uint32Array(8);
+    crypto.getRandomValues(bytes);
     let out = "";
-    for (let i = 0; i < 8; i++) { if (i === 4) out += "-"; out += chars[Math.floor(Math.random() * chars.length)]; }
+    for (let i = 0; i < 8; i++) { if (i === 4) out += "-"; out += chars[bytes[i] % chars.length]; }
     updateTest({ access_code: out });
   };
 

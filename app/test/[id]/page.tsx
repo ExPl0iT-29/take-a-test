@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { adminClient } from "@/lib/supabase/admin";
 import ExamRoom from "@/components/ExamRoom";
 import { SEB_ENFORCEMENT_ENABLED, verifySebRequest } from "@/lib/seb";
 import UnlockForm from "@/components/UnlockForm";
@@ -92,7 +93,8 @@ export default async function TakeTest({ params }: { params: Promise<{ id: strin
   const { data: invite } = await supabase
     .from("invites").select("id, used_at")
     .eq("test_id", id).ilike("email", user.email || "").maybeSingle();
-  const codeRequired = !!test.access_code || (!!invite && !invite.used_at);
+  const { data: secret } = await adminClient().from("test_secrets").select("access_code").eq("test_id", id).maybeSingle();
+  const codeRequired = !!secret?.access_code || (!!invite && !invite.used_at);
   if (codeRequired && !attempt.unlocked) {
     return (
       <main className="max-w-md mx-auto p-10">
