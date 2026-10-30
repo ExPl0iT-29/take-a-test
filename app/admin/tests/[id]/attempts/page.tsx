@@ -11,7 +11,7 @@ export default async function Attempts({ params }: { params: Promise<{ id: strin
 
   const { data: attempts } = await supabase
     .from("attempts")
-    .select("id, status, score, submitted_at, started_at, candidate:profiles(email, full_name)")
+    .select("id, status, score, submitted_at, started_at, session_locked, candidate:profiles(email, full_name)")
     .eq("test_id", id)
     .order("started_at", { ascending: false });
 
@@ -27,7 +27,7 @@ export default async function Attempts({ params }: { params: Promise<{ id: strin
           {(attempts || []).map((a: any) => (
             <tr key={a.id} className="border-t">
               <td className="py-2">{a.candidate?.full_name || a.candidate?.email}</td>
-              <td>{a.status}</td>
+              <td>{a.status}{a.session_locked && <span className="ml-2 text-xs text-red-600 font-medium">locked</span>}</td>
               <td>{a.score ?? "-"}</td>
               <td>{a.started_at ? new Date(a.started_at).toLocaleString() : "-"}</td>
               <td>{a.submitted_at ? new Date(a.submitted_at).toLocaleString() : "-"}</td>

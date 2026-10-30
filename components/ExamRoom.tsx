@@ -14,7 +14,7 @@ export default function ExamRoom({ test, questions, attempt }: { test: any; ques
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const [phase, setPhase] = useState<"prep" | "active" | "submitted">("prep");
+  const [phase, setPhase] = useState<"prep" | "active" | "submitted" | "locked">("prep");
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [violations, setViolations] = useState(0);
   const [banner, setBanner] = useState<string | null>(null);
@@ -26,13 +26,27 @@ export default function ExamRoom({ test, questions, attempt }: { test: any; ques
     await supabase.from("proctor_events").insert({ attempt_id: attempt.id, kind, detail });
   }, [attempt.id, supabase]);
 
+  // addViolation is defined below and used here via a ref to avoid a
+  // circular dependency (addViolation itself calls submit, which doesn't
+  // need saveAnswer) — declared with useRef since both are stable callbacks.
+  const addViolationRef = useRef<(kind: string, detail?: any, opts?: { skipLog?: boolean }) => void>(() => {});
+
   const saveAnswer = useCallback(async (q: Q, response: any) => {
     setAnswers((a) => ({ ...a, [q.id]: response }));
-    await supabase.from("answers").upsert(
-      { attempt_id: attempt.id, question_id: q.id, response, updated_at: new Date().toISOString() },
-      { onConflict: "attempt_id,question_id" }
-    );
-  }, [attempt.id, supabase]);
+    // Single-session enforcement happens server-side — see
+    // /api/test/[id]/answer. The browser no longer writes `answers` directly.
+    const r = await fetch(`/api/test/${test.id}/answer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question_id: q.id, response }),
+    });
+    if (r.status === 423) {
+      setPhase("locked");
+      return;
+    }
+    const j = await r.json().catch(() => ({}));
+    if (j.violation) addViolationRef.current(j.violation, undefined, { skipLog: true });
+  }, [test.id]);
 
   const submit = useCallback(async (terminated = false) => {
     // All grading happens server-side; client never sees correct answers.
@@ -48,8 +62,11 @@ export default function ExamRoom({ test, questions, attempt }: { test: any; ques
     router.refresh();
   }, [answers, attempt.id, questions, router, supabase]);
 
-  const addViolation = useCallback((kind: string, detail?: any) => {
-    logEvent(kind, detail);
+  const addViolation = useCallback((kind: string, detail?: any, opts?: { skipLog?: boolean }) => {
+    // skipLog: the server already wrote the proctor_event itself (e.g. a
+    // browser-change detected in /api/test/[id]/answer) — this just
+    // updates the local counter/banner without double-logging.
+    if (!opts?.skipLog) logEvent(kind, detail);
     setViolations((v) => {
       const next = v + 1;
       setBanner(`Violation (${next}/${MAX_VIOLATIONS}): ${kind}`);
@@ -60,6 +77,7 @@ export default function ExamRoom({ test, questions, attempt }: { test: any; ques
       return next;
     });
   }, [logEvent, submit]);
+  addViolationRef.current = addViolation;
 
   // Start: request camera + fullscreen
   const startExam = async () => {
@@ -148,6 +166,19 @@ export default function ExamRoom({ test, questions, attempt }: { test: any; ques
     }, 1000);
     return () => clearInterval(i);
   }, [phase, submit]);
+
+  if (phase === "locked") {
+    return (
+      <main className="max-w-xl mx-auto p-10 text-center">
+        <h1 className="text-2xl font-bold text-red-600">Session locked</h1>
+        <p className="text-slate-600 mt-3">
+          This exam was opened on another device or browser, or your session was interrupted.
+          For integrity, further answers are blocked until your supervisor allows you to resume.
+        </p>
+        <p className="text-slate-500 text-sm mt-2">Contact your administrator or proctor.</p>
+      </main>
+    );
+  }
 
   if (phase === "prep") {
     return (

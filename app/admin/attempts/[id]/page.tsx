@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Grader from "@/components/Grader";
+import ResumeSessionButton from "@/components/ResumeSessionButton";
 
 export default async function AttemptDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -39,6 +40,19 @@ export default async function AttemptDetail({ params }: { params: Promise<{ id: 
       <a href="/admin" className="text-sm text-slate-600">← Back</a>
       <h1 className="text-2xl font-bold mt-2">Attempt · {a?.test?.title}</h1>
       <p className="text-slate-600">{a?.candidate?.full_name} · {a?.candidate?.email} · {a?.status} · <b>total score: {a?.score ?? "-"}</b></p>
+
+      {a?.session_locked && (
+        <div className="card mt-4 border-red-300 bg-red-50 flex items-center justify-between">
+          <div>
+            <div className="font-medium text-red-700">Session locked</div>
+            <p className="text-sm text-red-600 mt-1">
+              A second device/browser tried to use this attempt (or the session cookie was lost). The candidate
+              cannot answer further questions until you allow resuming.
+            </p>
+          </div>
+          <ResumeSessionButton attemptId={id} />
+        </div>
+      )}
 
       {longAnswers.length > 0 && (
         <>

@@ -75,6 +75,15 @@ create table attempts (
   submitted_at timestamptz,
   score numeric,
   unlocked boolean not null default false,
+  -- Single-session enforcement (see /api/test/[id]/answer/route.ts): the
+  -- first answer-save binds this attempt to a server-generated token held
+  -- in an httpOnly cookie. A later request with a missing/different token
+  -- is a second device — session_locked blocks further writes until an
+  -- admin explicitly clears it (see /api/admin/attempts/[id]/resume).
+  session_token text,
+  session_ua text,
+  session_ip text,
+  session_locked boolean not null default false,
   unique (test_id, candidate_id)
 );
 
