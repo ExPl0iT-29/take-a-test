@@ -179,9 +179,13 @@ revoke insert on attempts from authenticated;
 grant insert (test_id, candidate_id) on attempts to authenticated;
 
 -- answers
+-- WITH CHECK previously omitted the admin branch that USING has, so an
+-- admin saving a manual grade on someone else's long-answer would fail
+-- RLS (new row's attempt.candidate_id is the candidate, never auth.uid()
+-- for an admin caller). Mirror the USING clause exactly.
 create policy "own answers" on answers for all
   using (exists(select 1 from attempts a where a.id = attempt_id and (a.candidate_id = auth.uid() or exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))))
-  with check (exists(select 1 from attempts a where a.id = attempt_id and a.candidate_id = auth.uid()));
+  with check (exists(select 1 from attempts a where a.id = attempt_id and (a.candidate_id = auth.uid() or exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))));
 
 -- invites
 create policy "admin manage invites" on invites for all
