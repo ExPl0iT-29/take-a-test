@@ -132,6 +132,23 @@ create table proctor_events (
 );
 
 ------------------------------------------------------------
+-- Admin check, MFA-gated.
+-- A stolen admin password alone no longer grants anything at the
+-- database level: every "admin manage *" policy below requires BOTH
+-- profiles.role = 'admin' AND an aal2 session (i.e. the user has
+-- actually completed TOTP MFA — see /mfa and app/middleware.ts). A role
+-- check alone is just a flag on a row; aal2 is enforced by Supabase Auth
+-- itself and can't be forged from the client.
+------------------------------------------------------------
+create or replace function public.is_admin()
+returns boolean
+language sql stable
+as $$
+  select exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+     and coalesce(auth.jwt() ->> 'aal', 'aal1') = 'aal2';
+$$;
+
+------------------------------------------------------------
 -- Row-Level Security
 ------------------------------------------------------------
 alter table profiles enable row level security;
@@ -163,8 +180,8 @@ grant insert (id, email, full_name) on profiles to authenticated;
 
 -- tests
 create policy "admin manage tests" on tests for all
-  using (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))
-  with check (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
+  using (is_admin())
+  with check (is_admin());
 -- `to authenticated`: without it this policy (and the questions one below,
 -- transitively) has no role restriction, so it also applies to `anon` —
 -- a fully unauthenticated caller using only the public anon key could
@@ -176,8 +193,8 @@ create policy "published tests readable" on tests for select to authenticated
 -- test_secrets: admin only (no candidate policy = no candidate access,
 -- same pattern as answer_keys above).
 create policy "admin manage test_secrets" on test_secrets for all
-  using (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))
-  with check (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
+  using (is_admin())
+  with check (is_admin());
 
 -- questions
 -- Previously readable by anyone (including anon) once the test was
@@ -203,7 +220,7 @@ grant execute on function public.test_requires_code(uuid, text) to authenticated
 create policy "questions readable with test" on questions for select to authenticated
   using (
     exists(select 1 from tests t where t.id = test_id and t.owner_id = auth.uid())
-    or exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+    or is_admin()
     or exists(
       select 1 from attempts a
       where a.test_id = questions.test_id and a.candidate_id = auth.uid()
@@ -218,8 +235,8 @@ create policy "questions readable with test" on questions for select to authenti
     )
   );
 create policy "admin manage questions" on questions for all
-  using (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))
-  with check (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
+  using (is_admin())
+  with check (is_admin());
 
 -- Editing a question's type/options/prompt after a candidate has already
 -- answered it would silently corrupt their stored response (e.g. an MCQ
@@ -244,8 +261,8 @@ create trigger lock_answered_question before update on questions
 
 -- answer_keys: admin only (no candidate policy = no candidate access)
 create policy "admin manage answer_keys" on answer_keys for all
-  using (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))
-  with check (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
+  using (is_admin())
+  with check (is_admin());
 
 -- attempts
 -- Candidates may read their own attempt and create it, but never write to
@@ -255,12 +272,12 @@ create policy "admin manage answer_keys" on answer_keys for all
 -- FOR ALL policy here previously let a candidate set their own score,
 -- status or unlocked flag straight from the browser.
 create policy "own attempts read" on attempts for select
-  using (candidate_id = auth.uid() or exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
+  using (candidate_id = auth.uid() or is_admin());
 create policy "own attempts insert" on attempts for insert
   with check (candidate_id = auth.uid());
 create policy "admin update attempts" on attempts for update
-  using (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))
-  with check (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
+  using (is_admin())
+  with check (is_admin());
 
 -- The insert policy only checks candidate_id — without this grant a
 -- candidate could insert their own attempt row with score/status/unlocked
@@ -285,7 +302,7 @@ grant update (response, updated_at) on answers to authenticated;
 -- or bypassed the client timer from still upserting answers after time's up.
 -- 2-minute grace absorbs network latency around the client's own cutoff.
 create policy "own answers" on answers for all
-  using (exists(select 1 from attempts a where a.id = attempt_id and (a.candidate_id = auth.uid() or exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))))
+  using (exists(select 1 from attempts a where a.id = attempt_id and (a.candidate_id = auth.uid() or is_admin())))
   with check (
     exists(
       select 1 from attempts a join tests t on t.id = a.test_id
@@ -293,15 +310,15 @@ create policy "own answers" on answers for all
         and (
           (a.candidate_id = auth.uid() and a.status = 'in_progress'
            and now() <= a.started_at + (t.duration_minutes || ' minutes')::interval + interval '2 minutes')
-          or exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+          or is_admin()
         )
     )
   );
 
 -- invites
 create policy "admin manage invites" on invites for all
-  using (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))
-  with check (exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
+  using (is_admin())
+  with check (is_admin());
 create policy "candidate read own invite" on invites for select to authenticated
   using (lower(email) = lower((select email from auth.users where id = auth.uid())));
 
@@ -317,7 +334,7 @@ grant select (id, test_id, email, used_at, created_at) on invites to authenticat
 create policy "own events insert" on proctor_events for insert
   with check (exists(select 1 from attempts a where a.id = attempt_id and a.candidate_id = auth.uid()));
 create policy "events read" on proctor_events for select
-  using (exists(select 1 from attempts a where a.id = attempt_id and (a.candidate_id = auth.uid() or exists(select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))));
+  using (exists(select 1 from attempts a where a.id = attempt_id and (a.candidate_id = auth.uid() or is_admin())));
 
 ------------------------------------------------------------
 -- Signup trigger — always creates as candidate.
@@ -347,20 +364,20 @@ create trigger on_auth_user_created after insert on auth.users
 revoke execute on function public.handle_new_user() from public, anon, authenticated;
 
 ------------------------------------------------------------
--- Server-side grading function.
--- Runs as the function owner so it can read answer_keys, but checks
--- the caller's identity matches the attempt being graded.
+-- Server-side grading.
+-- grade_attempt() does the actual per-question-type scoring and is
+-- reused by both submit_attempt() (auth-checked, called by the
+-- candidate's own submit) and close_expired_attempts() (service-role
+-- only, called by the cron maintenance endpoint for abandoned attempts
+-- nobody ever explicitly submitted).
 ------------------------------------------------------------
-create or replace function public.submit_attempt(p_attempt_id uuid, p_terminated boolean default false)
-returns void
+create or replace function public.grade_attempt(p_attempt_id uuid)
+returns numeric
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  v_user_id uuid := auth.uid();
-  v_test_id uuid;
-  v_status attempt_status;
   v_total numeric := 0;
   r record;
   s numeric;
@@ -374,13 +391,6 @@ declare
   norm_opts jsonb;
   cand text;
 begin
-  if v_user_id is null then raise exception 'not signed in'; end if;
-
-  select test_id, status into v_test_id, v_status
-  from attempts where id = p_attempt_id and candidate_id = v_user_id;
-  if v_test_id is null then raise exception 'attempt not found'; end if;
-  if v_status <> 'in_progress' then raise exception 'attempt not in progress'; end if;
-
   for r in
     select a.id as aid, q.id as qid, q.type, q.points, q.options, a.response, k.correct,
            coalesce(a.score, 0) as existing_score
@@ -476,6 +486,32 @@ begin
     v_total := v_total + s;
   end loop;
 
+  return v_total;
+end; $$;
+
+revoke execute on function public.grade_attempt(uuid) from public, anon, authenticated;
+
+create or replace function public.submit_attempt(p_attempt_id uuid, p_terminated boolean default false)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_test_id uuid;
+  v_status attempt_status;
+  v_total numeric;
+begin
+  if v_user_id is null then raise exception 'not signed in'; end if;
+
+  select test_id, status into v_test_id, v_status
+  from attempts where id = p_attempt_id and candidate_id = v_user_id;
+  if v_test_id is null then raise exception 'attempt not found'; end if;
+  if v_status <> 'in_progress' then raise exception 'attempt not in progress'; end if;
+
+  v_total := grade_attempt(p_attempt_id);
+
   update attempts
     set status = case when p_terminated then 'terminated'::attempt_status else 'submitted'::attempt_status end,
         submitted_at = now(),
@@ -485,6 +521,39 @@ end; $$;
 
 revoke execute on function public.submit_attempt(uuid, boolean) from public, anon;
 grant execute on function public.submit_attempt(uuid, boolean) to authenticated;
+
+-- Closes attempts nobody ever explicitly submitted — the candidate closed
+-- the tab, lost connection, etc. Called by /api/cron/maintenance, which a
+-- cron scheduler (Vercel Cron, cron-job.org, n8n...) hits periodically
+-- with CRON_SECRET. 2-minute grace matches the answers RLS time window.
+create or replace function public.close_expired_attempts()
+returns int
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  r record;
+  v_total numeric;
+  n int := 0;
+begin
+  for r in
+    select a.id
+    from attempts a
+    join tests t on t.id = a.test_id
+    where a.status = 'in_progress'
+      and now() > a.started_at + (t.duration_minutes || ' minutes')::interval + interval '2 minutes'
+  loop
+    v_total := grade_attempt(r.id);
+    update attempts set status = 'terminated', submitted_at = now(), score = v_total where id = r.id;
+    insert into proctor_events (attempt_id, kind, detail) values (r.id, 'auto_closed_expired', jsonb_build_object('score', v_total));
+    n := n + 1;
+  end loop;
+  return n;
+end; $$;
+
+revoke execute on function public.close_expired_attempts() from public, anon, authenticated;
+grant execute on function public.close_expired_attempts() to service_role;
 
 ------------------------------------------------------------
 -- Storage buckets + policies
@@ -515,7 +584,7 @@ create policy "snapshots candidate upload" on storage.objects for insert to auth
 create policy "snapshots admin read" on storage.objects for select to authenticated
   using (
     bucket_id = 'snapshots'
-    and exists(select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin')
+    and public.is_admin()
   );
 
 -- question-images: admin write; public read happens via the bucket's public URL
@@ -523,19 +592,19 @@ create policy "snapshots admin read" on storage.objects for select to authentica
 create policy "question-images admin write" on storage.objects for insert to authenticated
   with check (
     bucket_id = 'question-images'
-    and exists(select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin')
+    and public.is_admin()
   );
 
 create policy "question-images admin update" on storage.objects for update to authenticated
   using (
     bucket_id = 'question-images'
-    and exists(select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin')
+    and public.is_admin()
   );
 
 create policy "question-images admin delete" on storage.objects for delete to authenticated
   using (
     bucket_id = 'question-images'
-    and exists(select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin')
+    and public.is_admin()
   );
 
 ------------------------------------------------------------

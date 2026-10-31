@@ -138,6 +138,40 @@ export default function ExamRoom({ test, questions, attempt }: { test: any; ques
     };
   }, [phase, addViolation]);
 
+  // Multi-screen / devtools detection. Browser-based, so these are clues
+  // for the supervisor to review, not proof — logged only, never counted
+  // as a violation or auto-submitted.
+  useEffect(() => {
+    if (phase !== "active") return;
+    let lastMultiScreen: boolean | null = null;
+    let lastDevtools: boolean | null = null;
+
+    const check = () => {
+      // Window Management API (Chrome/Edge) — not universally supported,
+      // so this only fires when the browser can actually tell us.
+      const scr = window.screen as any;
+      if (typeof scr?.isExtended === "boolean") {
+        if (scr.isExtended !== lastMultiScreen) {
+          lastMultiScreen = scr.isExtended;
+          if (scr.isExtended) logEvent("multi_screen_detected");
+        }
+      }
+      // Docked devtools shrink the inner viewport relative to the outer
+      // window by a large, stable margin — a heuristic, not proof.
+      const widthGap = window.outerWidth - window.innerWidth;
+      const heightGap = window.outerHeight - window.innerHeight;
+      const devtoolsOpen = widthGap > 200 || heightGap > 200;
+      if (devtoolsOpen !== lastDevtools) {
+        lastDevtools = devtoolsOpen;
+        if (devtoolsOpen) logEvent("devtools_suspected", { widthGap, heightGap });
+      }
+    };
+
+    check();
+    const i = setInterval(check, 4000);
+    return () => clearInterval(i);
+  }, [phase, logEvent]);
+
   // Webcam liveness check + periodic snapshots
   useEffect(() => {
     if (phase !== "active") return;
