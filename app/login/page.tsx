@@ -21,8 +21,11 @@ function LoginInner() {
     e.preventDefault();
     setLoading(true); setErr(null);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
-    if (error) return setErr(error.message);
+    if (error) { setLoading(false); return setErr(error.message); }
+    // Stay in the loading state until the page actually navigates away —
+    // resetting it here made the button flash back to "Sign in" while the
+    // redirect (which can chain through /dashboard -> /admin -> /mfa) was
+    // still in flight, looking like the click did nothing.
     router.push(next);
     router.refresh();
   };
