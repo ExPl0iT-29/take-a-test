@@ -3,11 +3,11 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-type QType = "mcq_single" | "mcq_multi" | "long_text";
+type QType = "mcq_single" | "mcq_multi" | "long_text" | "reorder" | "associate" | "identify" | "short_answer";
 type Option = { id: string; text: string; image_url?: string | null };
 type Question = {
   id?: string; test_id: string; position: number; type: QType;
-  prompt: string; options: Option[] | null; correct: string[] | null;
+  prompt: string; options: any; correct: any;
   points: number; image_url?: string | null;
 };
 
@@ -78,12 +78,24 @@ export default function EditTest() {
   };
 
   const addQuestion = (type: QType) => {
-    const isMcq = type !== "long_text";
-    setQuestions((qs) => [...qs, {
-      test_id: id, position: qs.length, type, prompt: "",
-      options: isMcq ? [{ id: crypto.randomUUID(), text: "" }, { id: crypto.randomUUID(), text: "" }] : null,
-      correct: isMcq ? [] : null, points: 1, image_url: null,
-    }]);
+    const isMcq = type === "mcq_single" || type === "mcq_multi";
+    let options: any = null, correct: any = null;
+    if (isMcq) {
+      options = [{ id: crypto.randomUUID(), text: "" }, { id: crypto.randomUUID(), text: "" }];
+      correct = [];
+    } else if (type === "reorder") {
+      options = [{ id: crypto.randomUUID(), text: "" }, { id: crypto.randomUUID(), text: "" }];
+    } else if (type === "associate") {
+      options = { left: [{ id: crypto.randomUUID(), text: "" }], right: [{ id: crypto.randomUUID(), text: "" }] };
+      correct = [];
+    } else if (type === "identify") {
+      options = { lines: [{ id: crypto.randomUUID(), text: "" }] };
+      correct = [];
+    } else if (type === "short_answer") {
+      options = { normalize: { trim: true, case_insensitive: true, ignore_whitespace: false } };
+      correct = [""];
+    }
+    setQuestions((qs) => [...qs, { test_id: id, position: qs.length, type, prompt: "", options, correct, points: 1, image_url: null }]);
   };
 
   const saveAll = async () => {
@@ -96,10 +108,14 @@ export default function EditTest() {
         image_url: q.image_url ?? null,
       }));
       const { data: inserted } = await supabase.from("questions").insert(rows).select("id");
-      // Re-attach answer keys (only for MCQ)
-      const keyRows = (inserted || []).map((row: any, idx: number) => ({
-        question_id: row.id, correct: questions[idx].correct ?? [],
-      })).filter((_, idx) => questions[idx].type !== "long_text");
+      // Re-attach answer keys (every type except long_text, which is
+      // graded manually). reorder's correct order is just its options'
+      // array order — never edited separately.
+      const keyRows = (inserted || []).map((row: any, idx: number) => {
+        const q = questions[idx];
+        const correct = q.type === "reorder" ? (q.options || []).map((o: Option) => o.id) : (q.correct ?? []);
+        return { question_id: row.id, correct };
+      }).filter((_, idx) => questions[idx].type !== "long_text");
       if (keyRows.length) await supabase.from("answer_keys").upsert(keyRows);
     }
     setSaving(false);
@@ -205,6 +221,10 @@ export default function EditTest() {
         <button className="btn-secondary" onClick={() => addQuestion("mcq_single")}>+ MCQ (single)</button>
         <button className="btn-secondary" onClick={() => addQuestion("mcq_multi")}>+ MCQ (multi)</button>
         <button className="btn-secondary" onClick={() => addQuestion("long_text")}>+ Long answer</button>
+        <button className="btn-secondary" onClick={() => addQuestion("reorder")}>+ Put in order</button>
+        <button className="btn-secondary" onClick={() => addQuestion("associate")}>+ Associate</button>
+        <button className="btn-secondary" onClick={() => addQuestion("identify")}>+ Identify</button>
+        <button className="btn-secondary" onClick={() => addQuestion("short_answer")}>+ Short answer</button>
       </div>
 
       <div className="mt-4 space-y-4">
@@ -242,9 +262,9 @@ export default function EditTest() {
               }} />
             </label>
 
-            {q.type !== "long_text" && q.options && (
+            {(q.type === "mcq_single" || q.type === "mcq_multi") && q.options && (
               <div className="space-y-2">
-                {q.options.map((opt, j) => (
+                {q.options.map((opt: Option, j: number) => (
                   <div key={opt.id} className="space-y-1">
                     <div className="flex gap-2 items-center">
                       <input
@@ -256,29 +276,150 @@ export default function EditTest() {
                             if (k !== i) return x;
                             let cur = x.correct || [];
                             if (q.type === "mcq_single") cur = e.target.checked ? [opt.id] : [];
-                            else cur = e.target.checked ? [...cur, opt.id] : cur.filter((c) => c !== opt.id);
+                            else cur = e.target.checked ? [...cur, opt.id] : cur.filter((c: string) => c !== opt.id);
                             return { ...x, correct: cur };
                           }));
                         }}
                       />
                       <input className="input flex-1" placeholder={`Option ${j + 1}`} value={opt.text} onChange={(e) => {
                         const v = e.target.value;
-                        setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: x.options!.map((o) => o.id === opt.id ? { ...o, text: v } : o) } : x));
+                        setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: x.options!.map((o: Option) => o.id === opt.id ? { ...o, text: v } : o) } : x));
                       }} />
                       <label className="btn-secondary text-xs cursor-pointer">
                         {opt.image_url ? "img ✓" : "img"}
                         <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
                           const f = e.target.files?.[0]; if (!f) return;
                           const url = await uploadImage(f);
-                          if (url) setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: x.options!.map((o) => o.id === opt.id ? { ...o, image_url: url } : o) } : x));
+                          if (url) setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: x.options!.map((o: Option) => o.id === opt.id ? { ...o, image_url: url } : o) } : x));
                         }} />
                       </label>
-                      <button className="text-sm text-slate-500" onClick={() => setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: x.options!.filter((o) => o.id !== opt.id), correct: (x.correct || []).filter((c) => c !== opt.id) } : x))}>×</button>
+                      <button className="text-sm text-slate-500" onClick={() => setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: x.options!.filter((o: Option) => o.id !== opt.id), correct: (x.correct || []).filter((c: string) => c !== opt.id) } : x))}>×</button>
                     </div>
                     {opt.image_url && <img src={opt.image_url} alt="" className="max-h-24 rounded border ml-7" />}
                   </div>
                 ))}
                 <button className="btn-secondary text-xs" onClick={() => setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: [...(x.options || []), { id: crypto.randomUUID(), text: "" }] } : x))}>+ Add option</button>
+              </div>
+            )}
+
+            {q.type === "reorder" && (
+              <div className="space-y-2">
+                <p className="text-xs text-slate-500">Enter the steps in the CORRECT order — candidates see them shuffled.</p>
+                {(q.options || []).map((opt: Option, j: number) => (
+                  <div key={opt.id} className="flex gap-2 items-center">
+                    <span className="text-xs text-slate-400 w-5">{j + 1}.</span>
+                    <input className="input flex-1" placeholder={`Step ${j + 1}`} value={opt.text} onChange={(e) => {
+                      const v = e.target.value;
+                      setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: x.options.map((o: Option) => o.id === opt.id ? { ...o, text: v } : o) } : x));
+                    }} />
+                    <button className="text-xs text-slate-500" disabled={j === 0} onClick={() => setQuestions((arr) => arr.map((x, k) => {
+                      if (k !== i) return x;
+                      const next = [...x.options]; [next[j - 1], next[j]] = [next[j], next[j - 1]]; return { ...x, options: next };
+                    }))}>↑</button>
+                    <button className="text-xs text-slate-500" disabled={j === q.options.length - 1} onClick={() => setQuestions((arr) => arr.map((x, k) => {
+                      if (k !== i) return x;
+                      const next = [...x.options]; [next[j], next[j + 1]] = [next[j + 1], next[j]]; return { ...x, options: next };
+                    }))}>↓</button>
+                    <button className="text-sm text-slate-500" onClick={() => setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: x.options.filter((o: Option) => o.id !== opt.id) } : x))}>×</button>
+                  </div>
+                ))}
+                <button className="btn-secondary text-xs" onClick={() => setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: [...(x.options || []), { id: crypto.randomUUID(), text: "" }] } : x))}>+ Add step</button>
+              </div>
+            )}
+
+            {q.type === "associate" && (
+              <div className="space-y-3">
+                <p className="text-xs text-slate-500">Build both columns, then check which left/right pairs are correct. Extra right-side items with no correct pair act as lures.</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {(["left", "right"] as const).map((side) => (
+                    <div key={side} className="space-y-1">
+                      <div className="text-xs font-medium capitalize">{side}</div>
+                      {(q.options?.[side] || []).map((item: Option) => (
+                        <div key={item.id} className="flex gap-1 items-center">
+                          <input className="input text-sm flex-1" placeholder={item.id} value={item.text} onChange={(e) => {
+                            const v = e.target.value;
+                            setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: { ...x.options, [side]: x.options[side].map((o: Option) => o.id === item.id ? { ...o, text: v } : o) } } : x));
+                          }} />
+                          <button className="text-sm text-slate-500" onClick={() => setQuestions((arr) => arr.map((x, k) => {
+                            if (k !== i) return x;
+                            const field = side === "left" ? "left" : "right";
+                            return { ...x, options: { ...x.options, [side]: x.options[side].filter((o: Option) => o.id !== item.id) }, correct: (x.correct || []).filter((p: any) => p[field] !== item.id) };
+                          }))}>×</button>
+                        </div>
+                      ))}
+                      <button className="btn-secondary text-xs" onClick={() => setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: { ...x.options, [side]: [...(x.options[side] || []), { id: crypto.randomUUID(), text: "" }] } } : x))}>+ Add {side}</button>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <div className="text-xs font-medium">Correct pairs</div>
+                  {(q.options?.left || []).map((l: Option) => (
+                    <div key={l.id} className="flex gap-2 items-center text-sm mt-1">
+                      <span className="w-24 truncate">{l.text || "(left item)"}</span>
+                      <select className="input" value={(q.correct || []).find((p: any) => p.left === l.id)?.right || ""} onChange={(e) => {
+                        const right = e.target.value;
+                        setQuestions((arr) => arr.map((x, k) => {
+                          if (k !== i) return x;
+                          const rest = (x.correct || []).filter((p: any) => p.left !== l.id);
+                          return { ...x, correct: right ? [...rest, { left: l.id, right }] : rest };
+                        }));
+                      }}>
+                        <option value="">(no pair)</option>
+                        {(q.options?.right || []).map((r: Option) => <option key={r.id} value={r.id}>{r.text || r.id}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {q.type === "identify" && (
+              <div className="space-y-2">
+                <p className="text-xs text-slate-500">Enter each line/row candidates can click (code, log lines, table rows…), then check which ones are correct to flag.</p>
+                {(q.options?.lines || []).map((ln: Option, j: number) => (
+                  <div key={ln.id} className="flex gap-2 items-center">
+                    <input type="checkbox" checked={(q.correct || []).includes(ln.id)} onChange={(e) => {
+                      setQuestions((arr) => arr.map((x, k) => {
+                        if (k !== i) return x;
+                        const cur = x.correct || [];
+                        return { ...x, correct: e.target.checked ? [...cur, ln.id] : cur.filter((c: string) => c !== ln.id) };
+                      }));
+                    }} />
+                    <span className="text-xs text-slate-400 w-6">{j + 1}</span>
+                    <input className="input flex-1 font-mono text-sm" value={ln.text} onChange={(e) => {
+                      const v = e.target.value;
+                      setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: { ...x.options, lines: x.options.lines.map((o: Option) => o.id === ln.id ? { ...o, text: v } : o) } } : x));
+                    }} />
+                    <button className="text-sm text-slate-500" onClick={() => setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: { ...x.options, lines: x.options.lines.filter((o: Option) => o.id !== ln.id) }, correct: (x.correct || []).filter((c: string) => c !== ln.id) } : x))}>×</button>
+                  </div>
+                ))}
+                <button className="btn-secondary text-xs" onClick={() => setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: { ...x.options, lines: [...(x.options?.lines || []), { id: crypto.randomUUID(), text: "" }] } } : x))}>+ Add line</button>
+              </div>
+            )}
+
+            {q.type === "short_answer" && (
+              <div className="space-y-2">
+                <p className="text-xs text-slate-500">Accepted answers (any one matches). Comma-separate alternatives.</p>
+                <input className="input" placeholder="42, forty-two"
+                  value={(q.correct || []).join(", ")}
+                  onChange={(e) => {
+                    const v = e.target.value.split(",").map((s) => s.trim()).filter(Boolean);
+                    setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, correct: v } : x));
+                  }} />
+                <div className="flex gap-4 text-xs">
+                  <label className="flex items-center gap-1">
+                    <input type="checkbox" checked={q.options?.normalize?.trim ?? true} onChange={(e) => setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: { ...x.options, normalize: { ...x.options.normalize, trim: e.target.checked } } } : x))} />
+                    Trim whitespace
+                  </label>
+                  <label className="flex items-center gap-1">
+                    <input type="checkbox" checked={q.options?.normalize?.case_insensitive ?? true} onChange={(e) => setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: { ...x.options, normalize: { ...x.options.normalize, case_insensitive: e.target.checked } } } : x))} />
+                    Ignore case
+                  </label>
+                  <label className="flex items-center gap-1">
+                    <input type="checkbox" checked={q.options?.normalize?.ignore_whitespace ?? false} onChange={(e) => setQuestions((arr) => arr.map((x, k) => k === i ? { ...x, options: { ...x.options, normalize: { ...x.options.normalize, ignore_whitespace: e.target.checked } } } : x))} />
+                    Ignore all whitespace
+                  </label>
+                </div>
               </div>
             )}
           </div>

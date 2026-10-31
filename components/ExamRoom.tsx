@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-type Q = { id: string; type: "mcq_single" | "mcq_multi" | "long_text"; prompt: string; options: { id: string; text: string; image_url?: string | null }[] | null; points: number; image_url?: string | null };
+type QType = "mcq_single" | "mcq_multi" | "long_text" | "reorder" | "associate" | "identify" | "short_answer";
+type Q = { id: string; type: QType; prompt: string; options: any; points: number; image_url?: string | null };
 
 const SNAPSHOT_INTERVAL_MS = 15000;
 const MAX_VIOLATIONS = 3;
@@ -234,7 +235,7 @@ export default function ExamRoom({ test, questions, attempt }: { test: any; ques
                   onChange={(e) => saveAnswer(q, { text: e.target.value })}
                 />
               )}
-              {q.type !== "long_text" && q.options?.map((opt) => {
+              {(q.type === "mcq_single" || q.type === "mcq_multi") && q.options?.map((opt: any) => {
                 const sel: string[] = answers[q.id]?.selected || [];
                 const checked = sel.includes(opt.id);
                 return (
@@ -257,6 +258,80 @@ export default function ExamRoom({ test, questions, attempt }: { test: any; ques
                   </label>
                 );
               })}
+
+              {q.type === "reorder" && (() => {
+                const order: string[] = answers[q.id]?.order || (q.options || []).map((o: any) => o.id);
+                const byId = new Map<string, string>((q.options || []).map((o: any) => [o.id, o.text]));
+                const move = (j: number, dir: -1 | 1) => {
+                  const next = order.slice();
+                  const t = j + dir;
+                  if (t < 0 || t >= next.length) return;
+                  [next[j], next[t]] = [next[t], next[j]];
+                  saveAnswer(q, { order: next });
+                };
+                return (
+                  <div className="space-y-2">
+                    {order.map((oid, j) => (
+                      <div key={oid} className="flex gap-2 items-center p-2 rounded border border-slate-200">
+                        <span className="text-xs text-slate-400 w-5">{j + 1}.</span>
+                        <div className="flex-1">{byId.get(oid)}</div>
+                        <button className="text-sm text-slate-500" disabled={j === 0} onClick={() => move(j, -1)}>↑</button>
+                        <button className="text-sm text-slate-500" disabled={j === order.length - 1} onClick={() => move(j, 1)}>↓</button>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {q.type === "associate" && (
+                <div className="grid grid-cols-2 gap-4">
+                  {(q.options?.left || []).map((l: any) => {
+                    const pairs: { left: string; right: string }[] = answers[q.id]?.pairs || [];
+                    const current = pairs.find((p) => p.left === l.id)?.right || "";
+                    return (
+                      <div key={l.id} className="contents">
+                        <div className="p-2 rounded border border-slate-200">{l.text}</div>
+                        <select className="input" value={current} onChange={(e) => {
+                          const right = e.target.value;
+                          const rest = pairs.filter((p) => p.left !== l.id);
+                          saveAnswer(q, { pairs: right ? [...rest, { left: l.id, right }] : rest });
+                        }}>
+                          <option value="">—</option>
+                          {(q.options?.right || []).map((r: any) => <option key={r.id} value={r.id}>{r.text}</option>)}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {q.type === "identify" && (
+                <div className="font-mono text-sm border rounded divide-y">
+                  {(q.options?.lines || []).map((ln: any, j: number) => {
+                    const sel: string[] = answers[q.id]?.selected || [];
+                    const checked = sel.includes(ln.id);
+                    return (
+                      <label key={ln.id} className={`flex gap-2 items-center p-1.5 cursor-pointer ${checked ? "bg-amber-100" : ""}`}>
+                        <span className="text-slate-400 w-6 text-right select-none">{j + 1}</span>
+                        <input type="checkbox" checked={checked} onChange={(e) => {
+                          const next = e.target.checked ? [...sel, ln.id] : sel.filter((x) => x !== ln.id);
+                          saveAnswer(q, { selected: next });
+                        }} />
+                        <span className="whitespace-pre">{ln.text}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+
+              {q.type === "short_answer" && (
+                <input
+                  className="input"
+                  value={answers[q.id]?.text || ""}
+                  onPaste={(e) => e.preventDefault()}
+                  onChange={(e) => saveAnswer(q, { text: e.target.value })}
+                />
+              )}
             </div>
             <div className="mt-6 flex justify-between">
               <button className="btn-secondary" disabled={idx === 0} onClick={() => setIdx((i) => i - 1)}>← Previous</button>

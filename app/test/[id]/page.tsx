@@ -114,5 +114,18 @@ export default async function TakeTest({ params }: { params: Promise<{ id: strin
     );
   }
 
-  return <ExamRoom test={test} questions={questions || []} attempt={attempt} />;
+  // reorder: the stored options order IS the correct answer (answer_keys
+  // derives it from that order at save time) — shuffle it fresh for every
+  // render so the correct sequence never actually reaches the candidate.
+  const shuffled = (questions || []).map((q) => {
+    if (q.type !== "reorder" || !Array.isArray(q.options)) return q;
+    const arr = [...q.options];
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return { ...q, options: arr };
+  });
+
+  return <ExamRoom test={test} questions={shuffled} attempt={attempt} />;
 }

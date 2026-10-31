@@ -6,7 +6,21 @@
 -- Enums
 ------------------------------------------------------------
 create type user_role as enum ('admin', 'candidate');
-create type question_type as enum ('mcq_single', 'mcq_multi', 'long_text');
+create type question_type as enum (
+  'mcq_single', 'mcq_multi', 'long_text',
+  'reorder',      -- correct: ["id1","id2",...] in order. response: {"order":[...]}.
+  'associate',    -- correct: [{"left":"l1","right":"r1"},...]. response: {"pairs":[{"left":..,"right":..},...]}.
+  'identify',     -- correct: ["id1","id2",...]. response: {"selected":[...]}.
+  'short_answer'  -- correct: ["accepted1","accepted2",...]. response: {"text":"..."}. options.normalize: {trim,case_insensitive,ignore_whitespace}.
+);
+-- On an existing deployment (schema.sql already applied), add the new
+-- values directly instead of re-running the CREATE TYPE above:
+--   alter type question_type add value if not exists 'reorder';
+--   alter type question_type add value if not exists 'associate';
+--   alter type question_type add value if not exists 'identify';
+--   alter type question_type add value if not exists 'short_answer';
+-- (each must run as its own statement — Postgres won't let a new enum
+-- value be used in the same transaction it was added in)
 create type attempt_status as enum ('in_progress', 'submitted', 'terminated');
 
 ------------------------------------------------------------
@@ -353,6 +367,12 @@ declare
   resp jsonb;
   correct jsonb;
   match boolean;
+  n_total int;
+  n_hit int;
+  n_miss int;
+  norm_text text;
+  norm_opts jsonb;
+  cand text;
 begin
   if v_user_id is null then raise exception 'not signed in'; end if;
 
@@ -362,7 +382,7 @@ begin
   if v_status <> 'in_progress' then raise exception 'attempt not in progress'; end if;
 
   for r in
-    select a.id as aid, q.id as qid, q.type, q.points, a.response, k.correct,
+    select a.id as aid, q.id as qid, q.type, q.points, q.options, a.response, k.correct,
            coalesce(a.score, 0) as existing_score
     from answers a
     join questions q on q.id = a.question_id
@@ -371,20 +391,86 @@ begin
   loop
     s := 0;
     if r.type = 'long_text' then
-      s := r.existing_score;
-    else
+      s := r.existing_score; -- preserve any pre-grading
+
+    elsif r.type = 'mcq_single' then
       resp := coalesce(r.response->'selected', '[]'::jsonb);
       correct := coalesce(r.correct, '[]'::jsonb);
-      if r.type = 'mcq_single'
-         and jsonb_array_length(resp) = 1
+      if jsonb_array_length(resp) = 1
          and exists (select 1 from jsonb_array_elements_text(correct) c where c = resp->>0) then
         s := r.points;
-      elsif r.type = 'mcq_multi'
-         and jsonb_array_length(resp) = jsonb_array_length(correct) then
+      end if;
+
+    elsif r.type = 'mcq_multi' then
+      resp := coalesce(r.response->'selected', '[]'::jsonb);
+      correct := coalesce(r.correct, '[]'::jsonb);
+      if jsonb_array_length(resp) = jsonb_array_length(correct) then
         select bool_and(elem in (select jsonb_array_elements_text(correct)))
           into match from jsonb_array_elements_text(resp) elem;
         if coalesce(match, false) then s := r.points; end if;
       end if;
+
+    elsif r.type = 'reorder' then
+      -- correct: ["id1","id2",...] in the right order. response: {"order":[...]}.
+      -- Partial credit: points * (positions matching) / (total positions).
+      declare
+        cand_arr text[];
+        corr_arr text[];
+        n int;
+        hits int := 0;
+      begin
+        select array_agg(x) into cand_arr from jsonb_array_elements_text(coalesce(r.response->'order','[]'::jsonb)) x;
+        select array_agg(x) into corr_arr from jsonb_array_elements_text(coalesce(r.correct,'[]'::jsonb)) x;
+        n := coalesce(array_length(corr_arr, 1), 0);
+        if n > 0 and coalesce(array_length(cand_arr,1),0) = n then
+          for i in 1..n loop
+            if cand_arr[i] = corr_arr[i] then hits := hits + 1; end if;
+          end loop;
+          s := r.points * hits::numeric / n;
+        end if;
+      end;
+
+    elsif r.type = 'associate' then
+      -- correct: [{"left":"l1","right":"r1"},...]. response: {"pairs":[{"left":..,"right":..},...]}.
+      -- Partial credit: points * (correct pairs) / (total correct pairs).
+      n_total := coalesce(jsonb_array_length(r.correct), 0);
+      if n_total > 0 then
+        select count(*) into n_hit
+        from jsonb_array_elements(coalesce(r.response->'pairs','[]'::jsonb)) rp
+        where exists (
+          select 1 from jsonb_array_elements(r.correct) cp
+          where cp->>'left' = rp->>'left' and cp->>'right' = rp->>'right'
+        );
+        s := r.points * least(n_hit, n_total)::numeric / n_total;
+      end if;
+
+    elsif r.type = 'identify' then
+      -- correct: ["id1","id2",...]. response: {"selected":[...]}.
+      -- Partial credit: points * max(0, hits - misses) / expected count.
+      n_total := coalesce(jsonb_array_length(r.correct), 0);
+      if n_total > 0 then
+        select count(distinct x) into n_hit from jsonb_array_elements_text(coalesce(r.response->'selected','[]'::jsonb)) x
+          where x in (select jsonb_array_elements_text(r.correct));
+        select count(distinct x) into n_miss from jsonb_array_elements_text(coalesce(r.response->'selected','[]'::jsonb)) x
+          where x not in (select jsonb_array_elements_text(r.correct));
+        s := r.points * greatest(0, coalesce(n_hit,0) - coalesce(n_miss,0))::numeric / n_total;
+      end if;
+
+    elsif r.type = 'short_answer' then
+      -- correct: ["accepted1","accepted2",...], already normalized at
+      -- authoring time. response: {"text":"..."}. Normalization flags
+      -- come from the question's own options.normalize.
+      norm_opts := coalesce(r.options->'normalize', '{}'::jsonb);
+      norm_text := coalesce(r.response->>'text', '');
+      if coalesce((norm_opts->>'trim')::boolean, true) then norm_text := btrim(norm_text); end if;
+      if coalesce((norm_opts->>'ignore_whitespace')::boolean, false) then norm_text := regexp_replace(norm_text, '\s+', '', 'g'); end if;
+      if coalesce((norm_opts->>'case_insensitive')::boolean, true) then norm_text := lower(norm_text); end if;
+      for cand in select jsonb_array_elements_text(coalesce(r.correct,'[]'::jsonb)) loop
+        if cand = norm_text then s := r.points; exit; end if;
+      end loop;
+    end if;
+
+    if r.type != 'long_text' then
       update answers set score = s where id = r.aid;
     end if;
     v_total := v_total + s;
