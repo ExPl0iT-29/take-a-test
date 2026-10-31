@@ -22,7 +22,6 @@ export default function SignupPage() {
       options: { data: { full_name: fullName, role: "candidate" } },
     });
     if (error) { setLoading(false); return setErr(error.message); }
-    setLoading(false);
     router.push("/dashboard");
     router.refresh();
   };

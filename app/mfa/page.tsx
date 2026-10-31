@@ -55,8 +55,10 @@ function MfaInner() {
     const { data: challenge, error: chErr } = await supabase.auth.mfa.challenge({ factorId });
     if (chErr) { setBusy(false); setErr(chErr.message); return; }
     const { error } = await supabase.auth.mfa.verify({ factorId, challengeId: challenge.id, code });
-    setBusy(false);
-    if (error) return setErr(error.message);
+    if (error) { setBusy(false); return setErr(error.message); }
+    // Same fix as /login: stay busy until the redirect actually lands
+    // instead of flashing the button back while /admin's layout re-checks
+    // aal (now aal2) and finishes navigating.
     router.push(next);
     router.refresh();
   };

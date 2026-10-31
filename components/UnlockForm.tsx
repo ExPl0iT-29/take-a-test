@@ -15,8 +15,8 @@ export default function UnlockForm({ testId }: { testId: string }) {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code: code.trim() }),
     });
-    setLoading(false);
     if (!res.ok) {
+      setLoading(false);
       const j = await res.json().catch(() => ({}));
       return setErr(j.error || "Invalid code");
     }
